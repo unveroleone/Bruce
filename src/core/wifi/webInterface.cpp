@@ -10,6 +10,12 @@
 #include "esp_task_wdt.h"
 #include "webFiles.h"
 #include <globals.h>
+#include "esp_partition.h"
+#include "esp_ota_ops.h"
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "esp_flash.h"
+
 
 File uploadFile;
 FS _webFS = LittleFS;
@@ -352,6 +358,80 @@ void configureWebServer() {
         );
         request->send(200, "application/json", response_body);
     });
+    // Route to backup the firmware
+    server->on("/backup/full", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!checkUserWebAuth(request)) {
+            request->requestAuthentication();
+            return;
+        }
+
+        uint32_t flash_chip_size = 0;
+        esp_err_t sizeResult = esp_flash_get_size(nullptr, &flash_chip_size);
+
+        if (sizeResult != ESP_OK || flash_chip_size == 0) {
+            request->send(500, "text/plain", "Error getting flash size");
+            return;
+        }
+
+        Serial.printf("[BACKUP] Start full Backup (%u Bytes)\n", flash_chip_size);
+
+        AsyncWebServerResponse *response = request->beginChunkedResponse(
+            "application/octet-stream",
+            [flash_chip_size](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                if (index >= flash_chip_size) return 0;
+
+                size_t toRead = std::min(maxLen, flash_chip_size - index);
+                esp_err_t result = esp_flash_read(esp_flash_default_chip, buffer, index, toRead);
+
+                if (result != ESP_OK) {
+                    Serial.printf("[BACKUP] Error when reading index 0x%X\n", index);
+                    return 0;
+                }
+
+                return toRead;
+            }
+        );
+
+        response->addHeader("Content-Disposition", "attachment; filename=bruce_full_backup.bin");
+        request->send(response);
+    });
+    // Route to restore the LittleFS from a binary backup
+    server->on(
+        "/restore-littlefs", HTTP_POST,
+        [](AsyncWebServerRequest *request) {
+            Serial.println("[RESTORE] Upload completed – file has been written to SPI flash.");
+            request->send(200, "text/plain", "LittleFS successfully restored.");
+        },
+        nullptr,
+        [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+            const uint32_t LFS_OFFSET = 0x480000;  // Update according to your partition table
+            const uint32_t LFS_SIZE   = 0xB70000;
+
+            if (index == 0) {
+                Serial.println("[RESTORE] Starting LittleFS restore...");
+                esp_err_t eraseResult = esp_flash_erase_region(esp_flash_default_chip, LFS_OFFSET, LFS_SIZE);
+                if (eraseResult != ESP_OK) {
+                    Serial.printf("[RESTORE] Flash erase failed! Error: %s\n", esp_err_to_name(eraseResult));
+                    return;
+                }
+            }
+
+            if ((index + len) > LFS_SIZE) {
+                Serial.printf("[RESTORE] Error: incoming file exceeds partition size (%u > %u)\n", index + len, LFS_SIZE);
+                return;
+            }
+
+            esp_err_t writeResult = esp_flash_write(esp_flash_default_chip, data, LFS_OFFSET + index, len);
+            if (writeResult != ESP_OK) {
+                Serial.printf("[RESTORE] Flash write failed at offset 0x%X! Error: %s\n", index, esp_err_to_name(writeResult));
+                return;
+            }
+
+            if (final) {
+                Serial.println("[RESTORE] LittleFS restore finished successfully.");
+            }
+        }
+    );
 
     // Index page
     server->on("/Oc34N", HTTP_GET, [](AsyncWebServerRequest *request) {

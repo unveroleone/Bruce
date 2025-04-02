@@ -580,3 +580,59 @@ _("editor").addEventListener("keyup", function (e) {
   }
 
 });
+
+document.addEventListener("DOMContentLoaded", () => {
+  const backupBtn = document.getElementById("backup-btn");
+  if (backupBtn) {
+      backupBtn.addEventListener("click", backUp);
+  }
+});
+
+
+function BackUp() {
+  fetch('/backup')
+      .then(response => {
+          if (!response.ok) throw new Error('Backup request failed');
+          return response.blob();
+      })
+      .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+
+          const now = new Date();
+          const timestamp = now.toISOString().replace(/[:.]/g, '-');
+          a.download = `bruce_backup_${timestamp}.bin`;
+
+          a.href = url;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+      })
+      .catch(error => {
+          console.error('Backup Error:', error);
+          alert('Backup Failed: ' + error.message);
+      });
+}
+
+function triggerRestore() {
+  const fileInput = document.getElementById("littlefs-restore-file");
+  fileInput.click();
+
+  fileInput.onchange = () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      if (!confirm("Are you sure you want to overwrite LittleFS?\nThis will delete ALL files.")) return;
+
+      const formData = new FormData();
+      formData.append("restorefile", file);
+
+      fetch("/restore-littlefs", {
+          method: "POST",
+          body: formData
+      })
+      .then(res => res.ok ? alert("LittleFS successfully restored – restart recommended") : alert("Error restoring LittleFS"))
+      .catch(err => alert("Upload failed: " + err.message));
+  };
+}

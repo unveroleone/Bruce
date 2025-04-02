@@ -30,6 +30,9 @@
       <button onclick="serialCmd()">SerialCmd</button>
       <button onclick="listFilesButton('/', 'SD', true)">SD Files</button>
       <button onclick="listFilesButton('/', 'LittleFS', true)">LittleFS</button>
+      <button onclick="BackUp()">Backup</button>
+      <input type="file" id="littlefs-restore-file" style="display: none" />
+      <button onclick="triggerRestore()">Restore LittleFS</button>
 
     </div>
 
